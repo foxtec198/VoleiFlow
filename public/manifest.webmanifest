@@ -1,0 +1,12 @@
+{
+  "name": "VoleiFlow",
+  "short_name": "VoleiFlow",
+  "description": "Inscrições, presença e formação de times de vôlei.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f1e8",
+  "theme_color": "#122a23",
+  "icons": [
+    { "src": "/VoleiFlow_logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
