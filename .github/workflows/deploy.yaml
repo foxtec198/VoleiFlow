@@ -30,7 +30,6 @@ jobs: # Jobs will run
             cd /home/guibs/VoleiFlowApi
             sudo git stash
             sudo git pull origin main
-            sudo /home/guibs/VoleiFlowApi/venv/bin/pip install -r requirements.txt
 
             api_service=""
             for service in $(sudo systemctl list-units --type=service --state=running --no-legend --plain | awk '{print $1}'); do
