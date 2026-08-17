@@ -35,6 +35,7 @@ function Button({ children, tone = "primary", ...props }) { return <button class
 function Badge({ status }) { return <span className={`badge ${status}`}>{STATUS[status] || status}</span>; }
 function Empty({ children = "Nenhum registro por aqui ainda." }) { return <div className="empty">{children}</div>; }
 function Notice({ children, tone = "info" }) { return children ? <div className={`notice ${tone}`}>{children}</div> : null; }
+function AppFooter({ place }) { return <footer><span>© {new Date().getFullYear()} VoleiFlow · {place || "Gestão de jogos e inscrições"}</span><span>Feito para funcionar até com sinal ruim.</span></footer>; }
 
 const themeLogo = (theme) => `/favicon.svg#${theme === "dark" ? "dark" : "light"}`;
 
@@ -323,10 +324,10 @@ function App() {
   const isPlacesHome = location.pathname === "/";
   const [bootstrap, reload, loadError] = useLoad(isPlacesHome ? null : "/public/bootstrap", { events: [], positions: [], players: { items: [] }, settings: {} });
   const token = useMemo(() => location.pathname.match(/^\/(?:[^/]+\/)?confirmar\/(.+)$/)?.[1], []);
-  if (isPlacesHome) return <><ThemeToggle /><PlacesLanding /></>;
-  if (loadError === "Local não encontrado ou inativo.") return <><ThemeToggle /><PlaceNotFound /></>;
-  if (token) return <><ThemeToggle /><Confirmation token={token} goHome={() => { history.replaceState({}, "", PLACE_SLUG ? `/${PLACE_SLUG}` : "/nilo"); location.reload(); }} /></>;
-  return <><ThemeToggle /><header className="topbar"><button className="brand" onClick={() => setPage("inscricao")}><ThemedLogo alt="" /><span>Volei<b>Flow</b>{bootstrap.place?.name && <small>{bootstrap.place.name}</small>}</span></button><nav><button className={page === "inscricao" ? "active" : ""} onClick={() => setPage("inscricao")}>Inscrição</button><button className={page === "situacao" ? "active" : ""} onClick={() => setPage("situacao")}>Meus times</button><button className={page === "admin" ? "active" : ""} onClick={() => setPage("admin")}>Admin</button></nav><Connectivity /></header><main><Notice tone="error">{loadError}</Notice>{page === "inscricao" && <Signup bootstrap={bootstrap} reload={reload} />}{page === "situacao" && <Situation bootstrap={bootstrap} />}{page === "admin" && <AdminPortal bootstrap={bootstrap} reloadBootstrap={reload} />}</main><footer><span>VoleiFlow · {bootstrap.place?.name || "jogo organizado"}.</span><span>Feito para funcionar até com sinal ruim.</span></footer></>;
+  if (isPlacesHome) return <><ThemeToggle /><PlacesLanding /><AppFooter /></>;
+  if (loadError === "Local não encontrado ou inativo.") return <><ThemeToggle /><PlaceNotFound /><AppFooter /></>;
+  if (token) return <><ThemeToggle /><Confirmation token={token} goHome={() => { history.replaceState({}, "", PLACE_SLUG ? `/${PLACE_SLUG}` : "/nilo"); location.reload(); }} /><AppFooter /></>;
+  return <><ThemeToggle /><header className="topbar"><button className="brand" onClick={() => setPage("inscricao")}><ThemedLogo alt="" /><span>Volei<b>Flow</b>{bootstrap.place?.name && <small>{bootstrap.place.name}</small>}</span></button><nav><button className={page === "inscricao" ? "active" : ""} onClick={() => setPage("inscricao")}>Inscrição</button><button className={page === "situacao" ? "active" : ""} onClick={() => setPage("situacao")}>Meus times</button><button className={page === "admin" ? "active" : ""} onClick={() => setPage("admin")}>Admin</button></nav><Connectivity /></header><main><Notice tone="error">{loadError}</Notice>{page === "inscricao" && <Signup bootstrap={bootstrap} reload={reload} />}{page === "situacao" && <Situation bootstrap={bootstrap} />}{page === "admin" && <AdminPortal bootstrap={bootstrap} reloadBootstrap={reload} />}</main><AppFooter place={bootstrap.place?.name} /></>;
 }
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
