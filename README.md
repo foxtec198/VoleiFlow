@@ -9,7 +9,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Em desenvolvimento, o frontend acessa `http://localhost:7000/api`. Em produção, usa `/api` no mesmo domínio. Quando a API estiver em outro domínio, defina `VITE_API_URL=https://api.exemplo.com/api` no `.env` do servidor antes de executar o build. `VITE_URL` também é aceito por compatibilidade.
+Em desenvolvimento, o frontend acessa `http://localhost:7000/api`. Em produção, usa `/api` no mesmo domínio. Quando a API estiver em outro domínio, defina `VITE_API_URL=https://api.exemplo.com/api` no `.env` do servidor antes de executar o build. `VITE_URL` também é aceito por compatibilidade; domínios sem protocolo recebem `https://` automaticamente.
 
 ## PWA e modo offline
 
