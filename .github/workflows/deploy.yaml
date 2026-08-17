@@ -1,4 +1,4 @@
-name: Deploy Volei Flow - Front End
+name: Deploy Volei Flow
 on: # Call event
   push: # This is a PUSH event listener
     branches: [ "main" ] 
@@ -19,8 +19,33 @@ jobs: # Jobs will run
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -eu
+
             cd /home/guibs/VoleiFlow
             sudo git stash
             sudo git pull origin main
             sudo npm install
             sudo npm run build
+
+            cd /home/guibs/VoleiFlowApi
+            sudo git stash
+            sudo git pull origin main
+            sudo /home/guibs/VoleiFlowApi/venv/bin/pip install -r requirements.txt
+
+            api_service=""
+            for service in $(sudo systemctl list-units --type=service --state=running --no-legend --plain | awk '{print $1}'); do
+              working_directory=$(sudo systemctl show "$service" --property=WorkingDirectory --value)
+              if [ "${working_directory%/}" = "/home/guibs/VoleiFlowApi" ]; then
+                api_service="$service"
+                break
+              fi
+            done
+
+            if [ -z "$api_service" ]; then
+              echo "Serviço da API não encontrado pelo diretório de trabalho."
+              exit 1
+            fi
+
+            sudo systemctl restart "$api_service"
+            sudo systemctl is-active --quiet "$api_service"
+            echo "API reiniciada pelo serviço $api_service"
