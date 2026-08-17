@@ -32,19 +32,37 @@ jobs: # Jobs will run
             sudo git pull origin main
 
             api_service=""
-            for service in $(sudo systemctl list-units --type=service --state=running --no-legend --plain | awk '{print $1}'); do
-              working_directory=$(sudo systemctl show "$service" --property=WorkingDirectory --value)
+            api_service_scope=""
+            for service in $(systemctl --user list-units --type=service --state=running --no-legend --plain | awk '{print $1}'); do
+              working_directory=$(systemctl --user show "$service" --property=WorkingDirectory --value)
               if [ "${working_directory%/}" = "/home/guibs/VoleiFlowApi" ]; then
                 api_service="$service"
+                api_service_scope="user"
                 break
               fi
             done
+
+            if [ -z "$api_service" ]; then
+              for service in $(systemctl list-units --type=service --state=running --no-legend --plain | awk '{print $1}'); do
+                working_directory=$(systemctl show "$service" --property=WorkingDirectory --value)
+                if [ "${working_directory%/}" = "/home/guibs/VoleiFlowApi" ]; then
+                  api_service="$service"
+                  api_service_scope="system"
+                  break
+                fi
+              done
+            fi
 
             if [ -z "$api_service" ]; then
               echo "Serviço da API não encontrado pelo diretório de trabalho."
               exit 1
             fi
 
-            sudo systemctl restart "$api_service"
-            sudo systemctl is-active --quiet "$api_service"
+            if [ "$api_service_scope" = "user" ]; then
+              systemctl --user restart "$api_service"
+              systemctl --user is-active --quiet "$api_service"
+            else
+              sudo -n systemctl restart "$api_service"
+              systemctl is-active --quiet "$api_service"
+            fi
             echo "API reiniciada pelo serviço $api_service"
