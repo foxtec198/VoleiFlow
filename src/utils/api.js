@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:7000/api";
+const configuredApiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_URL;
+const defaultApiUrl = import.meta.env.PROD ? `${window.location.origin}/api` : "http://localhost:7000/api";
+const rawApiUrl = String(configuredApiUrl || defaultApiUrl).replace(/\/$/, "");
+const API_URL = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl}/api`;
 const firstPathSegment = window.location.pathname.split("/").filter(Boolean)[0];
 export const PLACE_SLUG = firstPathSegment && firstPathSegment !== "confirmar" ? firstPathSegment.toLowerCase() : null;
 
