@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, PLACE_SLUG, send } from "./utils/api";
 import { flushQueue, queueOperation, queueSize } from "./utils/offline";
@@ -35,6 +35,97 @@ function Button({ children, tone = "primary", ...props }) { return <button class
 function Badge({ status }) { return <span className={`badge ${status}`}>{STATUS[status] || status}</span>; }
 function Empty({ children = "Nenhum registro por aqui ainda." }) { return <div className="empty">{children}</div>; }
 function Notice({ children, tone = "info" }) { return children ? <div className={`notice ${tone}`}>{children}</div> : null; }
+
+const themeLogo = (theme) => `/favicon.svg#${theme === "dark" ? "dark" : "light"}`;
+
+function syncThemeAssets(theme) {
+  const favicon = document.querySelector('link[rel="icon"]');
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (favicon) favicon.href = themeLogo(theme);
+  if (themeColor) themeColor.content = theme === "dark" ? "#0d1512" : "#122a23";
+  window.dispatchEvent(new CustomEvent("voleiflow:theme", { detail: theme }));
+}
+
+function ThemedLogo(props) {
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || "light");
+  useEffect(() => {
+    const update = (event) => setTheme(event.detail);
+    window.addEventListener("voleiflow:theme", update);
+    return () => window.removeEventListener("voleiflow:theme", update);
+  }, []);
+  return <img {...props} src={themeLogo(theme)} />;
+}
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || "light");
+  const toggle = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("voleiflow_theme", next);
+    syncThemeAssets(next);
+    setTheme(next);
+  };
+  return <button className="theme-toggle" onClick={toggle} aria-label={theme === "dark" ? "Ativar modo claro" : "Ativar modo escuro"} title={theme === "dark" ? "Modo claro" : "Modo escuro"}>{theme === "dark" ? "☀" : "☾"}</button>;
+}
+
+function PlayerSearchSelect({ value, onChange, initialPlayers = [], placeholder = "Selecione seu cadastro" }) {
+  const rootRef = useRef(null);
+  const searchRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [players, setPlayers] = useState(() => initialPlayers.slice(0, 25));
+  const [loading, setLoading] = useState(false);
+  const [chosen, setChosen] = useState(null);
+  const selected = (chosen?.id === Number(value) ? chosen : null)
+    || players.find((item) => item.id === Number(value))
+    || initialPlayers.find((item) => item.id === Number(value));
+
+  useEffect(() => {
+    const close = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    searchRef.current?.focus();
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      try {
+        const result = await api(`/public/players?per_page=25&search=${encodeURIComponent(query.trim())}`);
+        if (active) setPlayers(result.items || []);
+      } catch {
+        if (active) setPlayers([]);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }, query.trim() ? 300 : 0);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [open, query]);
+
+  const choose = (player) => {
+    setChosen(player);
+    onChange(player);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return <div className={`player-select ${open ? "open" : ""}`} ref={rootRef}>
+    <button type="button" className="player-select-trigger" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      {selected ? <span><b>{selected.name}</b><small>{selected.email}</small></span> : <span className="player-select-placeholder">{placeholder}</span>}
+      <i>⌄</i>
+    </button>
+    {open && <div className="player-select-menu">
+      <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por nome ou e-mail" aria-label="Buscar jogador" />
+      <div className="player-select-options" role="listbox">
+        {loading && <span className="player-select-status">Buscando…</span>}
+        {!loading && players.map((player) => <button type="button" role="option" aria-selected={player.id === Number(value)} key={player.id} onClick={() => choose(player)}><b>{player.name}</b><small>{player.email}</small></button>)}
+        {!loading && !players.length && <span className="player-select-status">Nenhum jogador encontrado.</span>}
+      </div>
+    </div>}
+  </div>;
+}
 
 function Connectivity() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -82,7 +173,7 @@ function Signup({ bootstrap, reload }) {
     <form className="card signup-card" onSubmit={submit}><div className="card-title"><span>Inscrição</span><small>Leva menos de 1 minuto</small></div>
       <Notice tone="success">{message}</Notice><Notice tone="error">{error}</Notice>
       <Field label="Jogo"><select required value={form.event_id} onChange={(e) => setForm({ ...form, event_id: e.target.value, shift_id: "" })}><option value="">Selecione a data</option>{events.map((item) => <option value={item.id} key={item.id}>{fmtDate(item.game_date)} · {item.starts_at.slice(0, 5)} · {item.title}</option>)}</select></Field>
-      <Field label="Seu nome"><select required value={form.player_id} onChange={(e) => { const selected = players.find((item) => item.id === Number(e.target.value)); setForm({ ...form, player_id: e.target.value, primary_position_id: selected?.primary_position_id || "", secondary_position_id: selected?.secondary_position_id || "", is_guest: selected?.is_guest || false }); }}><option value="">Selecione seu cadastro</option>{players.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Seu nome"><PlayerSearchSelect value={form.player_id} initialPlayers={players} onChange={(selected) => setForm({ ...form, player_id: selected.id, primary_position_id: selected.primary_position_id || "", secondary_position_id: selected.secondary_position_id || "", is_guest: selected.is_guest || false })} /></Field>
       <Field label="Participação"><select value={form.is_guest ? "guest" : "member"} onChange={(e) => setForm({ ...form, is_guest: e.target.value === "guest" })}><option value="member">Membro</option><option value="guest">Convidado</option></select></Field>
       <div className="form-row"><Field label="Posição principal"><select required value={form.primary_position_id} onChange={(e) => setForm({ ...form, primary_position_id: e.target.value })}><option value="">Selecione</option>{positions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Posição secundária"><select value={form.secondary_position_id} onChange={(e) => setForm({ ...form, secondary_position_id: e.target.value })}><option value="">Nenhuma</option>{positions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
       <Field label="Turno"><select required disabled={!event} value={form.shift_id} onChange={(e) => setForm({ ...form, shift_id: e.target.value })}><option value="">Selecione</option>{event?.shifts.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.starts_at.slice(0, 5)}–{item.ends_at.slice(0, 5)}</option>)}</select></Field>
@@ -98,7 +189,7 @@ function Situation({ bootstrap }) {
   const search = async () => { try { const data = await api(`/players/${playerId}/events/${eventId}/situation`); setResult({ items: data.items || [], formations: data.formations || [] }); setSearched(true); setError(""); } catch (err) { setError(err.message); } };
   const periodText = (periods = []) => (periods || []).filter(Boolean).map((period) => `${period.name} · ${period.starts_at.slice(0, 5)}–${period.ends_at.slice(0, 5)}`).join(" + ");
   return <section className="page"><div className="page-heading"><span className="eyebrow">Área do jogador</span><h2>Meus times</h2><p>Consulte sua confirmação e veja todos os jogadores dos times já formados.</p></div><div className="card player-teams-search">
-    <div className="form-row"><Field label="Jogador"><select value={playerId} onChange={(e) => setPlayerId(e.target.value)}><option value="">Selecione</option>{bootstrap.players?.items?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Evento"><select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Selecione</option>{bootstrap.events?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field></div><Button disabled={!playerId || !eventId} onClick={search}>Consultar</Button><Notice tone="error">{error}</Notice>
+    <div className="form-row"><Field label="Jogador"><PlayerSearchSelect value={playerId} initialPlayers={bootstrap.players?.items || []} placeholder="Selecione o jogador" onChange={(selected) => setPlayerId(selected.id)} /></Field><Field label="Evento"><select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Selecione</option>{bootstrap.events?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field></div><Button disabled={!playerId || !eventId} onClick={search}>Consultar</Button><Notice tone="error">{error}</Notice>
     <div className="situation-list">{result.items.map((item) => <article key={item.id}><Badge status={item.status} /><h3>{item.team || "Time ainda não definido"}</h3><p>{item.assigned_position || item.primary_position}</p><small>{periodText([item.selected_period])}</small>{item.notes && <small>{item.notes}</small>}</article>)}</div>{searched && !result.items.length && <Empty>Você ainda não está inscrito neste evento.</Empty>}
   </div>{result.formations.map((formation) => <section className="player-formation" key={formation.formation_shift_id}><div className="section-heading"><div><span className="eyebrow">Formação publicada</span><h3>{periodText(formation.linked_shifts)}</h3></div><span>{formation.teams.length} time(s)</span></div><div className="teams-board public-teams">{formation.teams.map((team) => <article className="team-card" key={team.id}><header><div><span>#{team.number}</span><h3>{team.name}</h3></div></header><div className="team-members">{team.members.map((member) => <div className={member.registration.player_id === Number(playerId) ? "current-player" : ""} key={member.id}><div><b>{member.registration.player_name}{member.registration.player_id === Number(playerId) && " · você"}</b><small>{member.position}</small><small>{periodText(member.registration.selected_periods)}</small></div></div>)}</div></article>)}</div></section>)}{searched && result.items.length > 0 && !result.formations.length && <Empty>Os times deste período ainda não foram formados.</Empty>}</section>;
 }
@@ -136,9 +227,10 @@ function CatalogAdmin({ positions, reloadPositions }) {
 }
 
 function EventsAdmin() {
-  const [events, reload] = useLoad("/events?per_page=100", { items: [] }); const [shifts] = useLoad("/shifts?public=true&per_page=100", { items: [] });
-  const [form, setForm] = useState(() => ({ title: "Jogo de vôlei", game_date: new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 10), starts_at: "19:00", registration_opens_at: new Date(Date.now() - 3600000).toISOString(), team_count: 3, shift_ids: [], recurring: false, occurrences: 4, weekdays: [] }));
+  const [events, reload] = useLoad("/events?per_page=100", { items: [], recurrences: [] }); const [shifts] = useLoad("/shifts?public=true&per_page=100", { items: [] });
+  const [form, setForm] = useState(() => ({ title: "Jogo de vôlei", game_date: new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 10), starts_at: "19:00", registration_opens_at: new Date(Date.now() - 3600000).toISOString(), team_count: 3, shift_ids: [], recurring: false, weekdays: [] }));
   const [selected, setSelected] = useState(null); const [detail, setDetail] = useState(null); const [error, setError] = useState("");
+  const dayLabels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const open = async (id) => { try { setDetail(await api(`/events/${id}`)); setSelected(id); } catch (err) { setError(err.message); } };
   const attendance = async (registration, status) => {
     const payload = { registration_id: registration.id, status, reason: status.includes("absence") ? prompt("Motivo da falta:") || "Não informado" : null, base_updated_at: registration.updated_at };
@@ -147,8 +239,9 @@ function EventsAdmin() {
   };
   const updateNotes = async (registration) => { const notes = prompt("Observação:", registration.notes || ""); if (notes === null) return; const payload = { registration_id: registration.id, notes, base_updated_at: registration.updated_at }; if (!navigator.onLine) { queueOperation("notes", payload); setDetail({ ...detail, registrations: detail.registrations.map((item) => item.id === registration.id ? { ...item, notes } : item) }); } else { await send(`/registrations/${registration.id}/notes`, "PATCH", { notes }); open(selected); } };
   const removeEvent = async (scope) => { const recurring = scope === "recurrence"; if (!confirm(recurring ? "Remover todos os eventos desta recorrência? O histórico será preservado." : "Remover somente este evento? O histórico será preservado.")) return; try { await send(`/events/${selected}?scope=${scope}`, "DELETE"); setDetail(null); setSelected(null); reload(); } catch (err) { setError(err.message); } };
-  return <div className="admin-grid"><form className="card sticky-form" onSubmit={async (e) => { e.preventDefault(); try { const payload = { ...form, start_date: form.game_date }; delete payload.recurring; await send(form.recurring ? "/events/recurring" : "/events", "POST", payload); reload(); setError(""); } catch (err) { setError(err.message); } }}><h3>Novo evento</h3><Notice tone="error">{error}</Notice><Field label="Título"><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field><div className="form-row"><Field label="Data inicial"><input type="date" value={form.game_date} onChange={(e) => setForm({ ...form, game_date: e.target.value })} /></Field><Field label="Horário"><input type="time" value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} /></Field></div><Field label="Liberação das inscrições"><input type="datetime-local" value={form.registration_opens_at.slice(0, 16)} onChange={(e) => setForm({ ...form, registration_opens_at: new Date(e.target.value).toISOString() })} /></Field><Field label="Quantidade de times"><input type="number" min="1" max="12" value={form.team_count} onChange={(e) => setForm({ ...form, team_count: Number(e.target.value) })} /></Field><Field label="Turnos"><div className="checks">{shifts.items?.map((item) => <label key={item.id}><input type="checkbox" checked={form.shift_ids.includes(item.id)} onChange={(e) => setForm({ ...form, shift_ids: e.target.checked ? [...form.shift_ids, item.id] : form.shift_ids.filter((id) => id !== item.id) })} />{item.name}</label>)}</div></Field><label className="toggle"><input type="checkbox" checked={form.recurring} onChange={(e) => setForm({ ...form, recurring: e.target.checked })} /> Evento recorrente</label>{form.recurring && <><Field label="Repetir nos dias"><div className="checks">{["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((day, index) => <label key={day}><input type="checkbox" checked={form.weekdays.includes(index)} onChange={(e) => setForm({ ...form, weekdays: e.target.checked ? [...form.weekdays, index] : form.weekdays.filter((value) => value !== index) })} />{day}</label>)}</div></Field><Field label="Quantidade de eventos"><input type="number" min="1" max="52" value={form.occurrences} onChange={(e) => setForm({ ...form, occurrences: Number(e.target.value) })} /></Field></>}<Button disabled={!form.shift_ids.length || (form.recurring && !form.weekdays.length)}>{form.recurring ? "Gerar eventos" : "Criar evento"}</Button></form>
-    <div>{detail ? <><button className="back" onClick={() => setDetail(null)}>← Voltar aos eventos</button><div className="section-heading"><div><h3>{detail.title}</h3><span>{fmtDate(detail.game_date)} · {detail.starts_at.slice(0, 5)}</span></div><div className="actions"><Button tone="ghost" onClick={() => removeEvent("single")}>Remover este evento</Button>{detail.recurrence_group && <Button tone="danger" onClick={() => removeEvent("recurrence")}>Remover recorrência</Button>}</div></div><div className="stats">{["confirmed", "pending_confirmation", "waitlist"].map((key) => <div key={key}><b>{detail.summary[key] || 0}</b><span>{STATUS[key]}</span></div>)}</div><div className="vacancies">{detail.vacancies?.map((item) => <span key={`${item.shift_id}-${item.position_id}`}>{item.shift} · {item.position}: <b>{item.available}</b></span>)}</div><div className="list registrations">{detail.registrations.map((item) => <article className="list-item" key={item.id}><div><b>{item.player_name}</b><span>{item.primary_position} · {item.shift} · {item.is_guest ? "Convidado" : "Membro"} · Prioridade {item.priority_level}</span><small>{item.notes || "Sem observação"}</small></div><div className="attendance"><Badge status={item.status} /><button onClick={() => updateNotes(item)}>Observação</button><button onClick={() => attendance(item, "present")}>Presente</button><button onClick={() => attendance(item, "justified_absence")}>Justificada</button><button onClick={() => attendance(item, "unjustified_absence")}>Injustificada</button></div></article>)}</div></> : <><div className="section-heading"><h3>Eventos</h3><span>{events.pagination?.total || 0} agendados</span></div><div className="event-cards">{events.items?.map((item) => <button key={item.id} onClick={() => open(item.id)}><time><b>{String(new Date(`${item.game_date}T12:00`).getDate()).padStart(2, "0")}</b><span>{new Date(`${item.game_date}T12:00`).toLocaleDateString("pt-BR", { month: "short" })}</span></time><div><b>{item.title}</b><span>{item.starts_at.slice(0, 5)} · {item.shifts.map((shift) => shift.name).join(", ")}</span></div><Badge status={item.status} /></button>)}</div></>}</div></div>;
+  const removeRecurrence = async (eventId) => { if (!confirm("Remover esta recorrência permanente? Os eventos e o histórico serão preservados como removidos.")) return; try { await send(`/events/${eventId}?scope=recurrence`, "DELETE"); reload(); } catch (err) { setError(err.message); } };
+  return <div className="admin-grid"><form className="card sticky-form" onSubmit={async (e) => { e.preventDefault(); try { const payload = { ...form, start_date: form.game_date }; delete payload.recurring; await send(form.recurring ? "/events/recurring" : "/events", "POST", payload); reload(); setError(""); } catch (err) { setError(err.message); } }}><h3>Novo evento</h3><Notice tone="error">{error}</Notice><Field label="Título"><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field><div className="form-row"><Field label="Data inicial"><input type="date" value={form.game_date} onChange={(e) => setForm({ ...form, game_date: e.target.value })} /></Field><Field label="Horário"><input type="time" value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} /></Field></div><Field label="Liberação das inscrições"><input type="datetime-local" value={form.registration_opens_at.slice(0, 16)} onChange={(e) => setForm({ ...form, registration_opens_at: new Date(e.target.value).toISOString() })} /></Field><Field label="Quantidade de times"><input type="number" min="1" max="12" value={form.team_count} onChange={(e) => setForm({ ...form, team_count: Number(e.target.value) })} /></Field><Field label="Turnos"><div className="checks">{shifts.items?.map((item) => <label key={item.id}><input type="checkbox" checked={form.shift_ids.includes(item.id)} onChange={(e) => setForm({ ...form, shift_ids: e.target.checked ? [...form.shift_ids, item.id] : form.shift_ids.filter((id) => id !== item.id) })} />{item.name}</label>)}</div></Field><label className="toggle"><input type="checkbox" checked={form.recurring} onChange={(e) => setForm({ ...form, recurring: e.target.checked })} /> Evento recorrente</label>{form.recurring && <><Field label="Repetir nos dias"><div className="checks">{dayLabels.map((day, index) => <label key={day}><input type="checkbox" checked={form.weekdays.includes(index)} onChange={(e) => setForm({ ...form, weekdays: e.target.checked ? [...form.weekdays, index] : form.weekdays.filter((value) => value !== index) })} />{day}</label>)}</div></Field><div className="recurrence-hint"><b>Recorrência permanente</b><span>Os eventos continuarão sendo programados automaticamente, sem data final, até você remover a recorrência.</span>{events.recurrences?.length > 0 && <small>{events.recurrences.length} outra(s) recorrência(s) ativa(s) neste local.</small>}</div></>}<Button disabled={!form.shift_ids.length || (form.recurring && !form.weekdays.length)}>{form.recurring ? "Criar recorrência" : "Criar evento"}</Button></form>
+    <div>{detail ? <><button className="back" onClick={() => setDetail(null)}>← Voltar aos eventos</button><div className="section-heading"><div><h3>{detail.title}</h3><span>{fmtDate(detail.game_date)} · {detail.starts_at.slice(0, 5)}</span></div><div className="actions"><Button tone="ghost" onClick={() => removeEvent("single")}>Remover este evento</Button>{detail.recurrence_group && <Button tone="danger" onClick={() => removeEvent("recurrence")}>Remover recorrência</Button>}</div></div><div className="stats">{["confirmed", "pending_confirmation", "waitlist"].map((key) => <div key={key}><b>{detail.summary[key] || 0}</b><span>{STATUS[key]}</span></div>)}</div><div className="vacancies">{detail.vacancies?.map((item) => <span key={`${item.shift_id}-${item.position_id}`}>{item.shift} · {item.position}: <b>{item.available}</b></span>)}</div><div className="list registrations">{detail.registrations.map((item) => <article className="list-item" key={item.id}><div><b>{item.player_name}</b><span>{item.primary_position} · {item.shift} · {item.is_guest ? "Convidado" : "Membro"} · Prioridade {item.priority_level}</span><small>{item.notes || "Sem observação"}</small></div><div className="attendance"><Badge status={item.status} /><button onClick={() => updateNotes(item)}>Observação</button><button onClick={() => attendance(item, "present")}>Presente</button><button onClick={() => attendance(item, "justified_absence")}>Justificada</button><button onClick={() => attendance(item, "unjustified_absence")}>Injustificada</button></div></article>)}</div></> : <>{events.recurrences?.length > 0 && <section className="recurrences-panel"><div className="section-heading"><h3>Recorrências ativas</h3><span>Sem data final</span></div><div className="recurrence-cards">{events.recurrences.map((recurrence) => <article key={recurrence.recurrence_group}><div><b>{recurrence.title}</b><span>{recurrence.weekdays.map((day) => dayLabels[day]).join(", ")} · {recurrence.starts_at.slice(0, 5)}</span><small>Próximo evento: {fmtDate(recurrence.next_date)} · programada continuamente</small></div><button className="icon-button" onClick={() => removeRecurrence(recurrence.representative_event_id)}>Remover recorrência</button></article>)}</div></section>}<div className="section-heading"><h3>Eventos</h3><span>{events.pagination?.total || 0} agendados</span></div><div className="event-cards">{events.items?.map((item) => <button key={item.id} onClick={() => open(item.id)}><time><b>{String(new Date(`${item.game_date}T12:00`).getDate()).padStart(2, "0")}</b><span>{new Date(`${item.game_date}T12:00`).toLocaleDateString("pt-BR", { month: "short" })}</span></time><div><b>{item.title}</b><span>{item.starts_at.slice(0, 5)} · {item.shifts.map((shift) => shift.name).join(", ")}</span></div><Badge status={item.status} /></button>)}</div></>}</div></div>;
 }
 
 function BlacklistAdmin() {
@@ -195,7 +288,7 @@ function Confirmation({ token, goHome }) {
 
 function PlacesLanding() {
   const [places, , error] = useLoad("/places", { items: [] });
-  return <main className="places-page"><section className="places-hero"><img src="/VoleiFlow_logo.svg" alt="" /><span className="eyebrow">VoleiFlow</span><h1>Onde vamos jogar?</h1><p>Escolha o local para ver os próximos jogos, jogadores e inscrições.</p></section><Notice tone="error">{error}</Notice><div className="place-cards">{places.items?.map((place) => <a href={`/${place.slug}`} className="place-card" key={place.id}><div><span>Local</span><h2>{place.name}</h2><p>{place.address ? [place.address, place.neighborhood, place.city, place.state].filter(Boolean).join(" · ") : "Endereço em atualização"}</p></div><b>Acessar <span>→</span></b></a>)}</div>{!error && !places.items?.length && <Empty>Nenhum local disponível no momento.</Empty>}</main>;
+  return <main className="places-page"><section className="places-hero gap-4 flex"><ThemedLogo alt="" /><span className="eyebrow">VoleiFlow</span><h1>Onde vamos jogar?</h1><p>Escolha o local para ver os próximos jogos, jogadores e inscrições.</p></section><Notice tone="error">{error}</Notice><div className="place-cards">{places.items?.map((place) => <a href={`/${place.slug}`} className="place-card" key={place.id}><div><span>Local</span><h2>{place.name}</h2><p>{place.address ? [place.address, place.neighborhood, place.city, place.state].filter(Boolean).join(" · ") : "Endereço em atualização"}</p></div><b>Acessar <span>→</span></b></a>)}</div>{!error && !places.items?.length && <Empty>Nenhum local disponível no momento.</Empty>}</main>;
 }
 
 function PlaceNotFound() {
@@ -207,10 +300,10 @@ function App() {
   const isPlacesHome = location.pathname === "/";
   const [bootstrap, reload, loadError] = useLoad(isPlacesHome ? null : "/public/bootstrap", { events: [], positions: [], players: { items: [] }, settings: {} });
   const token = useMemo(() => location.pathname.match(/^\/(?:[^/]+\/)?confirmar\/(.+)$/)?.[1], []);
-  if (isPlacesHome) return <PlacesLanding />;
-  if (loadError === "Local não encontrado ou inativo.") return <PlaceNotFound />;
-  if (token) return <Confirmation token={token} goHome={() => { history.replaceState({}, "", PLACE_SLUG ? `/${PLACE_SLUG}` : "/nilo"); location.reload(); }} />;
-  return <><header className="topbar"><button className="brand" onClick={() => setPage("inscricao")}><img src="/VoleiFlow_logo.svg" alt="" /><span>Volei<b>Flow</b>{bootstrap.place?.name && <small>{bootstrap.place.name}</small>}</span></button><nav><button className={page === "inscricao" ? "active" : ""} onClick={() => setPage("inscricao")}>Inscrição</button><button className={page === "situacao" ? "active" : ""} onClick={() => setPage("situacao")}>Meus times</button><button className={page === "admin" ? "active" : ""} onClick={() => setPage("admin")}>Admin</button></nav><Connectivity /></header><main><Notice tone="error">{loadError}</Notice>{page === "inscricao" && <Signup bootstrap={bootstrap} reload={reload} />}{page === "situacao" && <Situation bootstrap={bootstrap} />}{page === "admin" && <AdminPortal bootstrap={bootstrap} reloadBootstrap={reload} />}</main><footer><span>VoleiFlow · {bootstrap.place?.name || "jogo organizado"}.</span><span>Feito para funcionar até com sinal ruim.</span></footer></>;
+  if (isPlacesHome) return <><ThemeToggle /><PlacesLanding /></>;
+  if (loadError === "Local não encontrado ou inativo.") return <><ThemeToggle /><PlaceNotFound /></>;
+  if (token) return <><ThemeToggle /><Confirmation token={token} goHome={() => { history.replaceState({}, "", PLACE_SLUG ? `/${PLACE_SLUG}` : "/nilo"); location.reload(); }} /></>;
+  return <><ThemeToggle /><header className="topbar"><button className="brand" onClick={() => setPage("inscricao")}><ThemedLogo alt="" /><span>Volei<b>Flow</b>{bootstrap.place?.name && <small>{bootstrap.place.name}</small>}</span></button><nav><button className={page === "inscricao" ? "active" : ""} onClick={() => setPage("inscricao")}>Inscrição</button><button className={page === "situacao" ? "active" : ""} onClick={() => setPage("situacao")}>Meus times</button><button className={page === "admin" ? "active" : ""} onClick={() => setPage("admin")}>Admin</button></nav><Connectivity /></header><main><Notice tone="error">{loadError}</Notice>{page === "inscricao" && <Signup bootstrap={bootstrap} reload={reload} />}{page === "situacao" && <Situation bootstrap={bootstrap} />}{page === "admin" && <AdminPortal bootstrap={bootstrap} reloadBootstrap={reload} />}</main><footer><span>VoleiFlow · {bootstrap.place?.name || "jogo organizado"}.</span><span>Feito para funcionar até com sinal ruim.</span></footer></>;
 }
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
