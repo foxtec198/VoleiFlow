@@ -184,6 +184,29 @@ function Signup({ bootstrap, reload }) {
   </section>;
 }
 
+function PublicTeamCard({ team, playerId, periodText, ownTeam = false }) {
+  return <article className={`team-card ${ownTeam ? "is-player-team" : ""}`} key={team.id}>
+    <header><div><span>#{team.number}</span><h3>{team.name}</h3></div>{ownTeam && <b>Seu time</b>}</header>
+    <div className="team-members">{team.members.map((member) => {
+      const isCurrentPlayer = member.registration.player_id === Number(playerId);
+      return <div className={isCurrentPlayer ? "current-player" : ""} key={member.id}><div><b>{member.registration.player_name}{isCurrentPlayer && " · você"}</b><small>{member.position}</small><small>{periodText(member.registration.selected_periods)}</small></div></div>;
+    })}</div>
+  </article>;
+}
+
+function PlayerFormation({ formation, playerId, periodText }) {
+  const myTeams = formation.teams.filter((team) => team.members.some(
+    (member) => member.registration.player_id === Number(playerId),
+  ));
+  const opponentTeams = formation.teams.filter((team) => !myTeams.some((mine) => mine.id === team.id));
+
+  return <section className="player-formation" key={formation.formation_shift_id}>
+    <div className="section-heading"><div><span className="eyebrow">Formação publicada</span><h3>{periodText(formation.linked_shifts)}</h3></div><span>{formation.teams.length} time(s)</span></div>
+    {myTeams.length > 0 && <section className="player-formation-group is-own-team"><header><span>🏐 Seu time</span><small>Confira seus companheiros e horários.</small></header><div className="teams-board public-teams">{myTeams.map((team) => <PublicTeamCard team={team} playerId={playerId} periodText={periodText} ownTeam />)}</div></section>}
+    {opponentTeams.length > 0 && <section className="player-formation-group"><header><span>👀 Times adversários</span><small>Conheça os outros times antes de entrar em quadra.</small></header><div className="teams-board public-teams">{opponentTeams.map((team) => <PublicTeamCard team={team} playerId={playerId} periodText={periodText} />)}</div></section>}
+  </section>;
+}
+
 function Situation({ bootstrap }) {
   const [playerId, setPlayerId] = useState(""); const [eventId, setEventId] = useState(""); const [result, setResult] = useState({ items: [], formations: [] }); const [searched, setSearched] = useState(false); const [error, setError] = useState("");
   const search = async () => { try { const data = await api(`/players/${playerId}/events/${eventId}/situation`); setResult({ items: data.items || [], formations: data.formations || [] }); setSearched(true); setError(""); } catch (err) { setError(err.message); } };
@@ -191,7 +214,7 @@ function Situation({ bootstrap }) {
   return <section className="page"><div className="page-heading"><span className="eyebrow">Área do jogador</span><h2>Meus times</h2><p>Consulte sua confirmação e veja todos os jogadores dos times já formados.</p></div><div className="card player-teams-search">
     <div className="form-row"><Field label="Jogador"><PlayerSearchSelect value={playerId} initialPlayers={bootstrap.players?.items || []} placeholder="Selecione o jogador" onChange={(selected) => setPlayerId(selected.id)} /></Field><Field label="Evento"><select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Selecione</option>{bootstrap.events?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field></div><Button disabled={!playerId || !eventId} onClick={search}>Consultar</Button><Notice tone="error">{error}</Notice>
     <div className="situation-list">{result.items.map((item) => <article key={item.id}><Badge status={item.status} /><h3>{item.team || "Time ainda não definido"}</h3><p>{item.assigned_position || item.primary_position}</p><small>{periodText([item.selected_period])}</small>{item.notes && <small>{item.notes}</small>}</article>)}</div>{searched && !result.items.length && <Empty>Você ainda não está inscrito neste evento.</Empty>}
-  </div>{result.formations.map((formation) => <section className="player-formation" key={formation.formation_shift_id}><div className="section-heading"><div><span className="eyebrow">Formação publicada</span><h3>{periodText(formation.linked_shifts)}</h3></div><span>{formation.teams.length} time(s)</span></div><div className="teams-board public-teams">{formation.teams.map((team) => <article className="team-card" key={team.id}><header><div><span>#{team.number}</span><h3>{team.name}</h3></div></header><div className="team-members">{team.members.map((member) => <div className={member.registration.player_id === Number(playerId) ? "current-player" : ""} key={member.id}><div><b>{member.registration.player_name}{member.registration.player_id === Number(playerId) && " · você"}</b><small>{member.position}</small><small>{periodText(member.registration.selected_periods)}</small></div></div>)}</div></article>)}</div></section>)}{searched && result.items.length > 0 && !result.formations.length && <Empty>Os times deste período ainda não foram formados.</Empty>}</section>;
+  </div>{result.formations.map((formation) => <PlayerFormation formation={formation} playerId={playerId} periodText={periodText} key={formation.formation_shift_id} />)}{searched && result.items.length > 0 && !result.formations.length && <Empty>Os times deste período ainda não foram formados.</Empty>}</section>;
 }
 
 function PlayersAdmin({ positions }) {
