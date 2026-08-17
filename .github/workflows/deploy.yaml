@@ -1,0 +1,26 @@
+name: Deploy Volei Flow - Front End
+on: # Call event
+  push: # This is a PUSH event listener
+    branches: [ "main" ] 
+
+jobs: # Jobs will run
+  deploy: # This a deploy 
+    runs-on: 
+      ubuntu-latest # This is a RUN on Ubuntu (LINUX)
+
+    steps: # And this is steps for Deploy!
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/guibs/VoleiFlow
+            sudo git stash
+            sudo git pull origin main
+            sudo npm install
+            sudo npm run build
