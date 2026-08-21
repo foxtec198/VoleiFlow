@@ -295,9 +295,60 @@ function BenchPlayer({ registration, positions, periodText }) {
 }
 
 function TeamsAdmin() {
-  const [events] = useLoad("/events?per_page=100", { items: [] }); const [eventId, setEventId] = useState(""); const event = events.items?.find((item) => item.id === Number(eventId)); const [shiftId, setShiftId] = useState(""); const [formation, setFormation] = useState(null); const [error, setError] = useState(""); const [copied, setCopied] = useState(false);
-  const load = async (generate = false) => { try { setFormation(await api(`/events/${eventId}/shifts/${shiftId}/formation`, generate ? { method: "POST" } : {})); setError(""); } catch (err) { setError(err.message); } };
-  const drop = async (teamId, positionId, memberId) => { try { setFormation(await send(`/team-members/${memberId}`, "PATCH", { team_id: teamId, position_id: positionId })); } catch (err) { setError(err.message); } };
+  const [events] = useLoad("/events?per_page=100", { items: [] }); const [eventId, setEventId] = useState(""); const [shiftId, setShiftId] = useState(""); const [formation, setFormation] = useState(null); const [error, setError] = useState(""); const [saved, setSaved] = useState(""); const [saving, setSaving] = useState(false); const [copied, setCopied] = useState(false);
+  const automaticSelection = useMemo(() => {
+    if (!events.items?.length) return { eventId: "", shiftId: "" };
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const scheduled = events.items.filter((item) => item.status === "scheduled");
+    const upcoming = scheduled.filter((item) => item.game_date >= today).sort((left, right) => left.game_date.localeCompare(right.game_date) || left.starts_at.localeCompare(right.starts_at) || left.id - right.id);
+    const nearest = upcoming[0] || [...scheduled].sort((left, right) => right.game_date.localeCompare(left.game_date) || right.starts_at.localeCompare(left.starts_at) || right.id - left.id)[0];
+    if (!nearest) return { eventId: "", shiftId: "" };
+    const eventsOnNearestDate = scheduled.filter((item) => item.game_date === nearest.game_date);
+    return {
+      eventId: String(nearest.id),
+      shiftId: eventsOnNearestDate.length === 1 && nearest.shifts?.length ? String(nearest.shifts[0].id) : "",
+    };
+  }, [events.items]);
+  const selectedEventId = eventId || automaticSelection.eventId;
+  const selectedShiftId = shiftId || (!eventId ? automaticSelection.shiftId : "");
+  const event = events.items?.find((item) => item.id === Number(selectedEventId));
+  const automaticLoad = useRef("");
+  useEffect(() => {
+    if (!selectedEventId || !selectedShiftId) return undefined;
+    const key = `${selectedEventId}:${selectedShiftId}`;
+    if (automaticLoad.current === key) return undefined;
+    automaticLoad.current = key;
+    let active = true;
+    const ensureFormation = async () => {
+      try {
+        let result;
+        try {
+          result = await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/formation`);
+        } catch (err) {
+          if (err.status !== 404) throw err;
+          result = await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/formation`, { method: "POST" });
+        }
+        if (active) { setFormation(result); setError(""); }
+      } catch (err) {
+        if (active) setError(err.message);
+      }
+    };
+    ensureFormation();
+    return () => { active = false; };
+  }, [selectedEventId, selectedShiftId]);
+  const load = async (generate = false) => {
+    if (generate && formation && !confirm("Refazer os times apaga todas as trocas manuais desta formação. Deseja continuar?")) return;
+    try { setFormation(await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/formation`, generate ? { method: "POST" } : {})); setError(""); setSaved(""); } catch (err) { setError(err.message); }
+  };
+  const drop = async (teamId, positionId, memberId) => {
+    setSaving(true); setSaved("");
+    try {
+      setFormation(await send(`/team-members/${memberId}`, "PATCH", { team_id: teamId, position_id: positionId }));
+      setError(""); setSaved("Alteração salva no banco.");
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  };
   const addFromBench = async (team, registrationId, positionId) => {
     const position = formation.positions.find((item) => item.id === positionId);
     const occupants = team.members.filter((item) => item.position_id === positionId).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
@@ -308,6 +359,7 @@ function TeamsAdmin() {
       if (!accepted) return;
       replaceMemberId = replacement.id;
     }
+    setSaving(true); setSaved("");
     try {
       setFormation(await send("/team-members", "POST", {
         registration_id: registrationId,
@@ -315,17 +367,19 @@ function TeamsAdmin() {
         position_id: positionId,
         replace_member_id: replaceMemberId,
       }));
-      setError("");
+      setError(""); setSaved("Alteração salva no banco.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSaving(false);
     }
   };
-  const handleTeamDrop = (event, team) => {
+  const handleTeamDrop = async (event, team) => {
     event.preventDefault();
     try {
       const payload = JSON.parse(event.dataTransfer.getData("text/plain"));
-      if (payload.type === "waitlist") addFromBench(team, payload.registrationId, payload.positionId);
-      else drop(team.id, payload.positionId, payload.memberId);
+      if (payload.type === "waitlist") await addFromBench(team, payload.registrationId, payload.positionId);
+      else await drop(team.id, payload.positionId, payload.memberId);
     } catch {
       setError("Não foi possível identificar o jogador arrastado.");
     }
@@ -348,8 +402,8 @@ function TeamsAdmin() {
     await drop(team.id, positionId, member.id);
   };
   const periodText = (periods = []) => (periods || []).filter(Boolean).map((period) => `${period.name} · ${period.starts_at.slice(0, 5)}–${period.ends_at.slice(0, 5)}`).join(" + ");
-  return <div><div className="toolbar card"><Field label="Evento"><select value={eventId} onChange={(e) => { setEventId(e.target.value); setShiftId(""); setFormation(null); }}><option value="">Selecione</option>{events.items?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field><Field label="Turno"><select value={shiftId} onChange={(e) => setShiftId(e.target.value)}><option value="">Selecione</option>{event?.shifts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Button disabled={!shiftId} onClick={() => load(true)}>Formar times</Button><Button tone="ghost" disabled={!shiftId} onClick={() => load(false)}>Atualizar</Button>{formation && <Button tone="dark" onClick={async () => { const { text } = await api(`/events/${eventId}/shifts/${shiftId}/whatsapp`); await navigator.clipboard.writeText(text); setCopied(true); }}>WhatsApp {copied ? "✓" : "↗"}</Button>}</div><Notice tone="error">{error}</Notice>
-    {formation && <><div className="linked-periods"><b>Turnos interligados:</b><span>{periodText(formation.linked_shifts)}</span></div><div className="balance"><div><span>Diferença média</span><b>{formation.differences.overall}</b></div>{Object.entries(formation.differences).filter(([key]) => key !== "overall").map(([key, value]) => <div key={key}><span>{key}</span><b>{value}</b></div>)}</div><div className="teams-board">{formation.teams.map((team) => <section className="team-card" key={team.id}><header><div><span>#{team.number}</span><h3>{team.name}</h3></div><b>{team.metrics.overall}</b></header><div className="team-members" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleTeamDrop(e, team)}>{team.members.map((member) => <article draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ type: "member", memberId: member.id, positionId: member.position_id }))} key={member.id}><span className="drag">⠿</span><div><b>{member.registration.player_name}</b><select className="member-position-select" aria-label={`Posição de ${member.registration.player_name}`} value={member.position_id} onChange={(e) => changePosition(team, member, Number(e.target.value))} onPointerDown={(e) => e.stopPropagation()}>{formation.positions.filter((position) => [member.registration.primary_position_id, member.registration.secondary_position_id].includes(position.id)).map((position) => <option key={position.id} value={position.id}>{position.name} · {position.required_per_team}/time</option>)}</select><small>{member.registration.overall} de nível · principal/secundária</small><small className="member-period">{periodText(member.registration.selected_periods)}</small></div><Badge status={member.registration.status} /></article>)}</div><div className="metric-bars">{Object.entries(team.metrics).filter(([key]) => key !== "overall").map(([key, value]) => <label key={key}><span>{key}</span><i><u style={{ width: `${value * 10}%` }} /></i><b>{value}</b></label>)}</div></section>)}</div>{formation.missing?.length > 0 && <div className="notice error"><b>Vagas não preenchidas:</b> {formation.missing.map((item) => `${item.team}: ${item.missing} ${item.position}`).join(" · ")}</div>}<section className="waitlist"><div className="waitlist-heading"><h3>Banco / lista de espera</h3><span>Escolha a posição e arraste para um time</span></div>{formation.waitlist.length ? <div className="bench-list">{formation.waitlist.map((item) => <BenchPlayer key={item.id} registration={item} positions={formation.positions} periodText={periodText} />)}</div> : <Empty>Ninguém aguardando.</Empty>}</section></>}
+  return <div><div className="toolbar card"><Field label="Evento"><select value={selectedEventId} onChange={(e) => { setEventId(e.target.value); setShiftId(""); setFormation(null); setSaved(""); }}><option value="">Selecione</option>{events.items?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field><Field label="Turno"><select value={selectedShiftId} onChange={(e) => { setShiftId(e.target.value); setSaved(""); }}><option value="">Selecione</option>{event?.shifts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Button disabled={!selectedShiftId || saving} onClick={() => load(true)}>{formation ? "Refazer times" : "Formar times"}</Button><Button tone="ghost" disabled={!selectedShiftId || saving} onClick={() => load(false)}>Atualizar</Button>{formation && <Button tone="dark" onClick={async () => { const { text } = await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/whatsapp`); await navigator.clipboard.writeText(text); setCopied(true); }}>WhatsApp {copied ? "✓" : "↗"}</Button>}</div><Notice tone="error">{error}</Notice><Notice>{saving ? "Salvando alteração…" : saved}</Notice>
+    {formation && <><div className="linked-periods"><b>Turnos interligados:</b><span>{periodText(formation.linked_shifts)}</span></div><div className="balance"><div><span>Diferença média</span><b>{formation.differences.overall}</b></div>{Object.entries(formation.differences).filter(([key]) => key !== "overall").map(([key, value]) => <div key={key}><span>{key}</span><b>{value}</b></div>)}</div><div className="teams-board">{formation.teams.map((team) => <section className="team-card" key={team.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleTeamDrop(e, team)}><header><div><span>#{team.number}</span><h3>{team.name}</h3></div><b>{team.metrics.overall}</b></header><div className="team-members">{team.members.map((member) => <article draggable={!saving} onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ type: "member", memberId: member.id, positionId: member.position_id }))} key={member.id}><span className="drag">⠿</span><div><b>{member.registration.player_name}</b><select className="member-position-select" aria-label={`Posição de ${member.registration.player_name}`} value={member.position_id} disabled={saving} onChange={(e) => changePosition(team, member, Number(e.target.value))} onPointerDown={(e) => e.stopPropagation()}>{formation.positions.filter((position) => [member.registration.primary_position_id, member.registration.secondary_position_id].includes(position.id)).map((position) => <option key={position.id} value={position.id}>{position.name} · {position.required_per_team}/time</option>)}</select><small>{member.registration.overall} de nível · principal/secundária</small><small className="member-period">{periodText(member.registration.selected_periods)}</small></div><Badge status={member.registration.status} /></article>)}</div><div className="metric-bars">{Object.entries(team.metrics).filter(([key]) => key !== "overall").map(([key, value]) => <label key={key}><span>{key}</span><i><u style={{ width: `${value * 10}%` }} /></i><b>{value}</b></label>)}</div></section>)}</div>{formation.missing?.length > 0 && <div className="notice error"><b>Vagas não preenchidas:</b> {formation.missing.map((item) => `${item.team}: ${item.missing} ${item.position}`).join(" · ")}</div>}<section className="waitlist"><div className="waitlist-heading"><h3>Banco / lista de espera</h3><span>Escolha a posição e arraste para um time</span></div>{formation.waitlist.length ? <div className="bench-list">{formation.waitlist.map((item) => <BenchPlayer key={item.id} registration={item} positions={formation.positions} periodText={periodText} />)}</div> : <Empty>Ninguém aguardando.</Empty>}</section></>}
   </div>;
 }
 

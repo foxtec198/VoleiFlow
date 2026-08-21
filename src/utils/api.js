@@ -27,7 +27,9 @@ export async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && !path.includes("/auth/login")) window.dispatchEvent(new Event("voleiflow:unauthorized"));
-    throw new Error(data.error || "Não foi possível concluir a operação.");
+    const error = new Error(data.error || "Não foi possível concluir a operação.");
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
