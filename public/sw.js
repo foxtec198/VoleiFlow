@@ -1,5 +1,5 @@
-const CACHE = "voleiflow-shell-v3";
-const DATA_CACHE = "voleiflow-data-v3";
+const CACHE = "voleiflow-shell-v4";
+const DATA_CACHE = "voleiflow-data-v4";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/favicon.svg"];
 
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then(async (cache) => {
@@ -16,6 +16,16 @@ self.addEventListener("activate", (event) => event.waitUntil(Promise.all([
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
+  if (event.request.mode === "navigate") {
+    event.respondWith(fetch(event.request).then((response) => {
+      if (response.ok) {
+        const copy = response.clone();
+        event.waitUntil(caches.open(CACHE).then((cache) => cache.put("/index.html", copy)));
+      }
+      return response;
+    }).catch(() => caches.match("/index.html")));
+    return;
+  }
   if (url.pathname.startsWith("/api/") && /bootstrap|events|formation/.test(url.pathname)) {
     event.respondWith(fetch(event.request).then((response) => {
       if (response.ok) {
