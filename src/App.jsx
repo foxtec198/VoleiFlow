@@ -339,11 +339,7 @@ function RegistrationsAdmin() {
 }
 
 function BenchPlayer({ registration, positions, periodText }) {
-  const allowedPositions = positions.filter((position) => [
-    registration.primary_position_id,
-    registration.secondary_position_id,
-  ].includes(position.id));
-  const draggable = registration.can_assign && allowedPositions.length > 0;
+  const draggable = registration.can_assign && positions.length > 0;
   return <article className={`bench-player ${draggable ? "" : "disabled"}`} draggable={draggable} onDragStart={(event) => {
     const positionId = Number(event.currentTarget.querySelector("select").value);
     event.dataTransfer.setData("text/plain", JSON.stringify({
@@ -354,7 +350,7 @@ function BenchPlayer({ registration, positions, periodText }) {
   }}>
     <span className="drag">⠿</span>
     <div><b>{registration.player_name}</b><small>{periodText(registration.selected_periods)}</small></div>
-    <select defaultValue={allowedPositions[0]?.id} disabled={!draggable} onPointerDown={(event) => event.stopPropagation()} aria-label={`Posição de ${registration.player_name}`}>{allowedPositions.map((position) => <option key={position.id} value={position.id}>{position.name}</option>)}</select>
+    <select defaultValue={registration.assigned_position_id || registration.primary_position_id || positions[0]?.id} disabled={!draggable} onPointerDown={(event) => event.stopPropagation()} aria-label={`Posição de ${registration.player_name}`}>{positions.map((position) => <option key={position.id} value={position.id}>{position.name}</option>)}</select>
     <Badge status={registration.status} />
   </article>;
 }
@@ -391,7 +387,7 @@ function sharedPositionRows(members) {
 
 function FormationMemberCard({ member, team, formation, saving, changePosition, periodText }) {
   return <article className="formation-member" draggable={!saving} onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ type: "member", memberId: member.id, positionId: member.position_id }))}>
-    <span className="drag">⠿</span><div><b>{member.registration.player_name}</b><select className="member-position-select" aria-label={`Posição de ${member.registration.player_name}`} value={member.position_id} disabled={saving} onChange={(e) => changePosition(team, member, Number(e.target.value))} onPointerDown={(e) => e.stopPropagation()}>{formation.positions.filter((position) => [member.registration.primary_position_id, member.registration.secondary_position_id].includes(position.id)).map((position) => <option key={position.id} value={position.id}>{position.name} · {position.required_per_team}/time</option>)}</select><small>{member.registration.overall} de nível · principal/secundária</small><small className="member-period">{periodText(member.registration.selected_periods)}</small></div><Badge status={member.registration.status} />
+    <span className="drag">⠿</span><div><b>{member.registration.player_name}</b><select className="member-position-select" aria-label={`Posição de ${member.registration.player_name}`} value={member.position_id} disabled={saving} onChange={(e) => changePosition(team, member, Number(e.target.value))} onPointerDown={(e) => e.stopPropagation()}>{formation.positions.map((position) => <option key={position.id} value={position.id}>{position.name} · {position.required_per_team}/time</option>)}</select><small>{member.registration.overall} de nível · posição manual livre</small><small className="member-period">{periodText(member.registration.selected_periods)}</small></div><Badge status={member.registration.status} />
   </article>;
 }
 
@@ -467,25 +463,25 @@ function TeamsAdmin() {
     finally { setSaving(false); }
   };
   const addFromBench = async (team, registrationId, positionId) => {
-    const position = formation.positions.find((item) => item.id === positionId);
-    const registration = formation.waitlist.find((item) => item.id === registrationId);
-    const occupants = team.members.filter((item) => item.position_id === positionId && registrationsOverlap(item.registration, registration)).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
-    let replaceMemberId = null;
-    if (occupants.length >= position.required_per_team) {
-      const replacement = occupants[0];
-      const accepted = confirm(`${position.name} já está completa no ${team.name}. ${replacement.registration.player_name} irá para o banco. Confirmar substituição?`);
-      if (!accepted) return;
-      replaceMemberId = replacement.id;
-    }
     setSaving(true); setSaved("");
     try {
       setFormation(await send("/team-members", "POST", {
         registration_id: registrationId,
         team_id: team.id,
         position_id: positionId,
-        replace_member_id: replaceMemberId,
       }));
       setError(""); setSaved("Alteração salva no banco.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const removeToBench = async (memberId) => {
+    setSaving(true); setSaved("");
+    try {
+      setFormation(await send(`/team-members/${memberId}`, "DELETE", {}));
+      setError(""); setSaved("Jogador movido para o banco.");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -504,25 +500,12 @@ function TeamsAdmin() {
   };
   const changePosition = async (team, member, positionId) => {
     if (positionId === member.position_id) return;
-    const position = formation.positions.find((item) => item.id === positionId);
-    const occupants = team.members.filter((item) => item.id !== member.id && item.position_id === positionId && registrationsOverlap(item.registration, member.registration)).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
-    if (occupants.length >= position.required_per_team) {
-      const sourcePosition = formation.positions.find((item) => item.id === member.position_id);
-      const eligible = occupants.filter((item) => [item.registration.primary_position_id, item.registration.secondary_position_id].includes(member.position_id) && team.members.filter((candidate) => ![member.id, item.id].includes(candidate.id) && candidate.position_id === member.position_id && registrationsOverlap(candidate.registration, item.registration)).length < sourcePosition.required_per_team);
-      if (!eligible.length) {
-        setError(`${position.name} já atingiu o limite neste time. Altere primeiro a posição de outro jogador para liberar a vaga.`);
-        return;
-      }
-      const swap = eligible[0];
-      const accepted = confirm(`${position.name} já atingiu o limite de ${position.required_per_team} por time. Para manter as quantidades, ${swap.registration.player_name} será movido para ${member.position}. Confirmar troca?`);
-      if (!accepted) return;
-    }
     setError("");
     await drop(team.id, positionId, member.id);
   };
   const periodText = (periods = []) => (periods || []).filter(Boolean).map((period) => `${period.name} · ${period.starts_at.slice(0, 5)}–${period.ends_at.slice(0, 5)}`).join(" + ");
   return <div><div className="toolbar card"><Field label="Evento"><select value={selectedEventId} onChange={(e) => { setEventId(e.target.value); setFormation(null); setSaved(""); }}><option value="">Selecione</option>{events.items?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field><Button disabled={!selectedShiftId || saving} onClick={() => load(true)}>{formation ? "Refazer times" : "Formar times"}</Button><Button tone="ghost" disabled={!selectedShiftId || saving} onClick={() => load(false)}>Atualizar</Button>{formation && <Button tone="dark" onClick={async () => { const { text } = await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/whatsapp`); await navigator.clipboard.writeText(text); setCopied(true); }}>WhatsApp {copied ? "✓" : "↗"}</Button>}</div><Notice tone="error">{error}</Notice><Notice>{saving ? "Salvando alteração…" : saved}</Notice>
-    {formation && <><div className="linked-periods"><b>Turnos interligados:</b><span>{periodText(formation.linked_shifts)}</span></div><div className="balance"><div><span>Diferença média</span><b>{formation.differences.overall}</b></div>{Object.entries(formation.differences).filter(([key]) => key !== "overall").map(([key, value]) => <div key={key}><span>{key}</span><b>{value}</b></div>)}</div><div className="teams-board">{formation.teams.map((team) => <FormationTeamCard team={team} formation={formation} saving={saving} changePosition={changePosition} handleTeamDrop={handleTeamDrop} periodText={periodText} key={team.id} />)}</div>{formation.missing?.length > 0 && <div className="notice error"><b>Vagas não preenchidas:</b> {formation.missing.map((item) => `${item.team}: ${item.missing} ${item.position}`).join(" · ")}</div>}<section className="waitlist"><div className="waitlist-heading"><h3>Banco / lista de espera</h3><span>Escolha a posição e arraste para um time</span></div>{formation.waitlist.length ? <div className="bench-list">{formation.waitlist.map((item) => <BenchPlayer key={item.id} registration={item} positions={formation.positions} periodText={periodText} />)}</div> : <Empty>Ninguém aguardando.</Empty>}</section></>}
+    {formation && <><div className="linked-periods"><b>Turnos interligados:</b><span>{periodText(formation.linked_shifts)}</span></div><div className="balance"><div><span>Diferença média</span><b>{formation.differences.overall}</b></div>{Object.entries(formation.differences).filter(([key]) => key !== "overall").map(([key, value]) => <div key={key}><span>{key}</span><b>{value}</b></div>)}</div><div className="teams-board">{formation.teams.map((team) => <FormationTeamCard team={team} formation={formation} saving={saving} changePosition={changePosition} handleTeamDrop={handleTeamDrop} periodText={periodText} key={team.id} />)}</div>{formation.missing?.length > 0 && <div className="notice error"><b>Vagas não preenchidas:</b> {formation.missing.map((item) => `${item.team}: ${item.missing} ${item.position}`).join(" · ")}</div>}<section className="waitlist" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); try { const payload = JSON.parse(event.dataTransfer.getData("text/plain")); if (payload.type === "member") removeToBench(payload.memberId); } catch { setError("Não foi possível identificar o jogador arrastado."); } }}><div className="waitlist-heading"><h3>Banco / lista de espera</h3><span>Arraste do time para cá ou escolha qualquer posição para subir ao time</span></div>{formation.waitlist.length ? <div className="bench-list">{formation.waitlist.map((item) => <BenchPlayer key={item.id} registration={item} positions={formation.positions} periodText={periodText} />)}</div> : <Empty>Arraste um jogador do time para colocá-lo no banco.</Empty>}</section></>}
   </div>;
 }
 
