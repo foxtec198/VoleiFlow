@@ -11,6 +11,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradie
 [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background: #101a16; border-color: #43534c; color: var(--ink); }
 [data-theme="dark"] .topbar nav button, [data-theme="dark"] .subnav button, [data-theme="dark"] .field > span { color: var(--muted); }
 [data-theme="dark"] .topbar nav button.active, [data-theme="dark"] .stats div, [data-theme="dark"] .team-card header, [data-theme="dark"] .button.dark { background: #07110e; color: white; }
+[data-theme="dark"] .registration-column > header { background: #07110e; color: white; }
+[data-theme="dark"] .registration-column > header > b { color: #122a23; }
 [data-theme="dark"] .button.ghost, [data-theme="dark"] .checks label, [data-theme="dark"] .situation-list article, [data-theme="dark"] .team-members article, [data-theme="dark"] .public-teams .team-members > div, [data-theme="dark"] .registration-entry { background: #202d28; color: var(--ink); }
 [data-theme="dark"] .linked-periods { background: #1b2e24; border-color: #375849; }
 [data-theme="dark"] .public-teams .team-members > div.current-player { background: #30451f; }
