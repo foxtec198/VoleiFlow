@@ -273,6 +273,35 @@ function BlacklistAdmin() {
   return <div><form className="card horizontal-card" onSubmit={async (e) => { e.preventDefault(); await send("/blacklist", "POST", { ...form, player_id: Number(form.player_id), origin: "manual" }); setForm({ player_id: "", reason: "" }); reload(); }}><Field label="Jogador"><select required value={form.player_id} onChange={(e) => setForm({ ...form, player_id: e.target.value })}><option value="">Selecione</option>{players.items?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Motivo"><input required value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></Field><Button>Adicionar bloqueio</Button></form><div className="section-heading"><h3>Histórico da Lista Negra</h3><span>Remoções preservam o registro</span></div><div className="list">{entries.items?.map((item) => <article className="list-item" key={item.id}><div><b>{item.player_name}</b><span>{item.reason}</span><small>{item.origin} · {new Date(item.included_at).toLocaleString("pt-BR")}</small></div><div className="actions"><Badge status={item.active ? "unjustified_absence" : "cancelled"} />{item.active && <button className="icon-button" onClick={async () => { await send(`/blacklist/${item.id}`, "DELETE", { reason: prompt("Motivo da remoção:") }); reload(); }}>Remover</button>}</div></article>)}</div></div>;
 }
 
+function RegistrationsAdmin() {
+  const [events] = useLoad("/events?per_page=100", { items: [] });
+  const [eventId, setEventId] = useState("");
+  const automaticEventId = useMemo(() => {
+    const items = events.items || [];
+    if (!items.length) return "";
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const scheduled = items.filter((item) => item.status === "scheduled");
+    const upcoming = scheduled.filter((item) => item.game_date >= today).sort((left, right) => left.game_date.localeCompare(right.game_date) || left.starts_at.localeCompare(right.starts_at) || left.id - right.id);
+    const nearest = upcoming[0] || [...scheduled].sort((left, right) => right.game_date.localeCompare(left.game_date) || right.starts_at.localeCompare(left.starts_at) || right.id - left.id)[0];
+    return nearest ? String(nearest.id) : "";
+  }, [events.items]);
+  const selectedEventId = eventId || automaticEventId;
+  const [detail, reload, error] = useLoad(selectedEventId ? `/events/${selectedEventId}` : null, null);
+  const selectedDetail = detail?.id === Number(selectedEventId) ? detail : null;
+  const registrationDate = (value) => value ? new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—";
+  return <div className="registrations-admin">
+    <div className="toolbar card"><Field label="Evento"><select value={selectedEventId} onChange={(e) => setEventId(e.target.value)}><option value="">Selecione</option>{events.items?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field><Button tone="ghost" disabled={!selectedEventId} onClick={reload}>Atualizar</Button></div>
+    <Notice tone="error">{error}</Notice>
+    {selectedDetail ? <><div className="section-heading registrations-title"><div><h3>{selectedDetail.title}</h3><span>{fmtDate(selectedDetail.game_date)} · inscrições por ordem de cadastro</span></div><b>{selectedDetail.registrations.length} inscrição(ões)</b></div>
+      <div className="registrations-board">{[...selectedDetail.shifts].sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.ends_at.localeCompare(right.ends_at) || left.id - right.id).map((shift) => {
+        const registrations = selectedDetail.registrations.filter((item) => item.shift_id === shift.id);
+        return <section className="registration-column" key={shift.id}><header><div><h3>{shift.name}</h3><span>{shift.starts_at.slice(0, 5)}–{shift.ends_at.slice(0, 5)}</span></div><b>{registrations.length}</b></header><div className="registration-column-list">{registrations.length ? registrations.map((registration, index) => <article className="registration-entry" key={registration.id}><div className="registration-order">#{String(index + 1).padStart(2, "0")}</div><div className="registration-main"><div><b>{registration.player_name}</b><Badge status={registration.status} /></div><span>{registration.primary_position}{registration.secondary_position ? ` · ${registration.secondary_position}` : ""}</span><small>Inscrito em {registrationDate(registration.created_at)}</small>{registration.notes && <small className="registration-note">{registration.notes}</small>}</div><div className="registration-flags"><span className={`membership-badge ${registration.is_guest ? "guest" : "member"}`}>{registration.is_guest ? "Convidado" : "Membro"}</span><span className="priority-badge">P{registration.priority_level}</span></div></article>) : <Empty>Nenhuma inscrição neste turno.</Empty>}</div></section>;
+      })}</div>
+    </> : selectedEventId && !error ? <div className="loading-screen">Carregando inscrições…</div> : <Empty>Selecione um evento para visualizar as inscrições.</Empty>}
+  </div>;
+}
+
 function BenchPlayer({ registration, positions, periodText }) {
   const allowedPositions = positions.filter((position) => [
     registration.primary_position_id,
@@ -422,9 +451,9 @@ function AdminPortal({ bootstrap, reloadBootstrap }) {
 }
 
 function Admin({ bootstrap, reloadBootstrap, admin, onLogout }) {
-  const tabs = ["Eventos", "Jogadores", "Posições e turnos", "Lista Negra", "Formação de times"]; const [tab, setTab] = useState("Eventos");
+  const tabs = ["Eventos", "Inscrições", "Jogadores", "Posições e turnos", "Lista Negra", "Formação de times"]; const [tab, setTab] = useState("Eventos");
   return <section className="admin-page"><div className="admin-heading"><div><span className="eyebrow">Central de controle</span><h2>Administração</h2></div><div className="admin-user"><div><b>{admin.name}</b><span>{admin.email}</span></div><Button tone="ghost" onClick={onLogout}>Sair</Button></div></div><nav className="subnav">{tabs.map((item) => <button className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{item}</button>)}</nav>
-    <div className="admin-content">{tab === "Eventos" && <EventsAdmin />}{tab === "Jogadores" && <PlayersAdmin positions={bootstrap.positions || []} />}{tab === "Posições e turnos" && <CatalogAdmin positions={bootstrap.positions || []} reloadPositions={reloadBootstrap} />}{tab === "Lista Negra" && <BlacklistAdmin />}{tab === "Formação de times" && <TeamsAdmin />}</div>
+    <div className="admin-content">{tab === "Eventos" && <EventsAdmin />}{tab === "Inscrições" && <RegistrationsAdmin />}{tab === "Jogadores" && <PlayersAdmin positions={bootstrap.positions || []} />}{tab === "Posições e turnos" && <CatalogAdmin positions={bootstrap.positions || []} reloadPositions={reloadBootstrap} />}{tab === "Lista Negra" && <BlacklistAdmin />}{tab === "Formação de times" && <TeamsAdmin />}</div>
   </section>;
 }
 
