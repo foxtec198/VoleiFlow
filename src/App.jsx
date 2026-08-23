@@ -208,13 +208,49 @@ function PlayerFormation({ formation, playerId, periodText }) {
   </section>;
 }
 
+function SituationRegistration({ item, event, positions, playerId, periodText, onSaved }) {
+  const initial = {
+    shift_id: String(item.shift_id),
+    primary_position_id: String(item.primary_position_id),
+    secondary_position_id: item.secondary_position_id ? String(item.secondary_position_id) : "",
+  };
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(initial);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const save = async (e) => {
+    e.preventDefault(); setSaving(true); setMessage(""); setError("");
+    try {
+      await send(`/registrations/${item.id}`, "PATCH", {
+        player_id: Number(playerId), shift_id: Number(form.shift_id),
+        primary_position_id: Number(form.primary_position_id),
+        secondary_position_id: form.secondary_position_id ? Number(form.secondary_position_id) : null,
+      });
+      setEditing(false); setMessage("Inscrição atualizada."); await onSaved();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  return <article>
+    <Badge status={item.status} /><h3>{item.team || "Time ainda não definido"}</h3><p>{item.assigned_position || item.primary_position}</p><small>{periodText([item.selected_period])}</small>{item.notes && <small>{item.notes}</small>}
+    <div className="situation-actions"><button type="button" className="icon-button" onClick={() => { setEditing((value) => !value); setMessage(""); setError(""); }}>{editing ? "Cancelar alteração" : "Alterar turno ou posição"}</button></div>
+    <Notice tone="success">{message}</Notice><Notice tone="error">{error}</Notice>
+    {editing && <form className="situation-edit" onSubmit={save}>
+      {item.team && <small className="situation-warning">Se o novo turno ou posição não forem compatíveis com a escalação atual, você voltará para o banco até o time ser rebalanceado.</small>}
+      <Field label="Turno"><select required value={form.shift_id} onChange={(e) => setForm({ ...form, shift_id: e.target.value })}>{event?.shifts.map((shift) => <option value={shift.id} key={shift.id}>{shift.name} · {shift.starts_at.slice(0, 5)}–{shift.ends_at.slice(0, 5)}</option>)}</select></Field>
+      <div className="form-row"><Field label="Posição principal"><select required value={form.primary_position_id} onChange={(e) => setForm({ ...form, primary_position_id: e.target.value, secondary_position_id: form.secondary_position_id === e.target.value ? "" : form.secondary_position_id })}>{positions.map((position) => <option key={position.id} value={position.id}>{position.name}</option>)}</select></Field><Field label="Posição secundária"><select value={form.secondary_position_id} onChange={(e) => setForm({ ...form, secondary_position_id: e.target.value })}><option value="">Nenhuma</option>{positions.filter((position) => String(position.id) !== form.primary_position_id).map((position) => <option key={position.id} value={position.id}>{position.name}</option>)}</select></Field></div>
+      <Button disabled={saving}>{saving ? "Salvando…" : "Salvar alteração"}</Button>
+    </form>}
+  </article>;
+}
+
 function Situation({ bootstrap }) {
   const [playerId, setPlayerId] = useState(""); const [eventId, setEventId] = useState(""); const [result, setResult] = useState({ items: [], formations: [] }); const [searched, setSearched] = useState(false); const [error, setError] = useState("");
   const search = async () => { try { const data = await api(`/players/${playerId}/events/${eventId}/situation`); setResult({ items: data.items || [], formations: data.formations || [] }); setSearched(true); setError(""); } catch (err) { setError(err.message); } };
   const periodText = (periods = []) => (periods || []).filter(Boolean).map((period) => `${period.name} · ${period.starts_at.slice(0, 5)}–${period.ends_at.slice(0, 5)}`).join(" + ");
+  const event = bootstrap.events?.find((item) => item.id === Number(eventId));
   return <section className="page"><div className="page-heading"><span className="eyebrow">Área do jogador</span><h2>Meus times</h2><p>Consulte sua confirmação e veja todos os jogadores dos times já formados.</p></div><div className="card player-teams-search">
     <div className="form-row"><Field label="Jogador"><PlayerSearchSelect value={playerId} initialPlayers={bootstrap.players?.items || []} placeholder="Selecione o jogador" onChange={(selected) => setPlayerId(selected.id)} /></Field><Field label="Evento"><select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Selecione</option>{bootstrap.events?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field></div><Button disabled={!playerId || !eventId} onClick={search}>Consultar</Button><Notice tone="error">{error}</Notice>
-    <div className="situation-list">{result.items.map((item) => <article key={item.id}><Badge status={item.status} /><h3>{item.team || "Time ainda não definido"}</h3><p>{item.assigned_position || item.primary_position}</p><small>{periodText([item.selected_period])}</small>{item.notes && <small>{item.notes}</small>}</article>)}</div>{searched && !result.items.length && <Empty>Você ainda não está inscrito neste evento.</Empty>}
+    <div className="situation-list">{result.items.map((item) => <SituationRegistration item={item} event={event} positions={bootstrap.positions || []} playerId={playerId} periodText={periodText} onSaved={search} key={`${item.id}-${item.updated_at}`} />)}</div>{searched && !result.items.length && <Empty>Você ainda não está inscrito neste evento.</Empty>}
   </div>{result.formations.map((formation) => <PlayerFormation formation={formation} playerId={playerId} periodText={periodText} key={formation.formation_shift_id} />)}{searched && result.items.length > 0 && !result.formations.length && <Empty>Os times deste período ainda não foram formados.</Empty>}</section>;
 }
 
