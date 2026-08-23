@@ -359,25 +359,77 @@ function BenchPlayer({ registration, positions, periodText }) {
   </article>;
 }
 
+const registrationPeriods = (registration = {}) => registration.selected_periods?.length
+  ? registration.selected_periods
+  : [registration.selected_period].filter(Boolean);
+const registrationsOverlap = (left, right) => registrationPeriods(left).some((leftPeriod) =>
+  registrationPeriods(right).some((rightPeriod) =>
+    leftPeriod.starts_at < rightPeriod.ends_at && rightPeriod.starts_at < leftPeriod.ends_at));
+
+function sharedPositionRows(members) {
+  const byPosition = new Map();
+  members.forEach((member) => {
+    if (!byPosition.has(member.position_id)) byPosition.set(member.position_id, []);
+    byPosition.get(member.position_id).push(member);
+  });
+  return [...byPosition.values()].flatMap((positionMembers) => {
+    const rows = [];
+    [...positionMembers].sort((left, right) => {
+      const leftPeriod = registrationPeriods(left.registration)[0];
+      const rightPeriod = registrationPeriods(right.registration)[0];
+      return (leftPeriod?.starts_at || "").localeCompare(rightPeriod?.starts_at || "")
+        || (leftPeriod?.ends_at || "").localeCompare(rightPeriod?.ends_at || "")
+        || left.id - right.id;
+    }).forEach((member) => {
+      const row = rows.find((items) => items.every((existing) =>
+        !registrationsOverlap(existing.registration, member.registration)));
+      if (row) row.push(member); else rows.push([member]);
+    });
+    return rows;
+  });
+}
+
+function FormationMemberCard({ member, team, formation, saving, changePosition, periodText }) {
+  return <article className="formation-member" draggable={!saving} onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ type: "member", memberId: member.id, positionId: member.position_id }))}>
+    <span className="drag">⠿</span><div><b>{member.registration.player_name}</b><select className="member-position-select" aria-label={`Posição de ${member.registration.player_name}`} value={member.position_id} disabled={saving} onChange={(e) => changePosition(team, member, Number(e.target.value))} onPointerDown={(e) => e.stopPropagation()}>{formation.positions.filter((position) => [member.registration.primary_position_id, member.registration.secondary_position_id].includes(position.id)).map((position) => <option key={position.id} value={position.id}>{position.name} · {position.required_per_team}/time</option>)}</select><small>{member.registration.overall} de nível · principal/secundária</small><small className="member-period">{periodText(member.registration.selected_periods)}</small></div><Badge status={member.registration.status} />
+  </article>;
+}
+
+function FormationMemberRow({ row, team, formation, saving, changePosition, periodText }) {
+  const [active, setActive] = useState(0);
+  if (row.length === 1) return <div className="team-member-row"><FormationMemberCard member={row[0]} team={team} formation={formation} saving={saving} changePosition={changePosition} periodText={periodText} /></div>;
+  const currentIndex = active % row.length;
+  const current = row[currentIndex];
+  const select = (index) => setActive((index + row.length) % row.length);
+  return <div className="team-member-row shared-player-carousel">
+    <div className="shared-player-heading"><span>Vaga compartilhada · {current.position}</span><div><button type="button" onClick={() => select(currentIndex - 1)} aria-label={`Jogador anterior de ${current.position}`}>←</button><b>{currentIndex + 1}/{row.length}</b><button type="button" onClick={() => select(currentIndex + 1)} aria-label={`Próximo jogador de ${current.position}`}>→</button></div></div>
+    <FormationMemberCard member={current} team={team} formation={formation} saving={saving} changePosition={changePosition} periodText={periodText} key={current.id} />
+    <div className="shared-player-tabs" role="tablist" aria-label={`Jogadores de ${current.position}`}>{row.map((member, index) => <button type="button" role="tab" aria-selected={index === currentIndex} className={index === currentIndex ? "active" : ""} onClick={() => select(index)} key={member.id}>{registrationPeriods(member.registration).map((period) => period.name).join(" + ") || member.registration.player_name}</button>)}</div>
+  </div>;
+}
+
+function FormationTeamCard({ team, formation, saving, changePosition, handleTeamDrop, periodText }) {
+  return <section className="team-card" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleTeamDrop(e, team)}>
+    <header><div><span>#{team.number}</span><h3>{team.name}</h3></div><b>{team.metrics.overall}</b></header>
+    <div className="team-members">{sharedPositionRows(team.members).map((row) => <FormationMemberRow row={row} team={team} formation={formation} saving={saving} changePosition={changePosition} periodText={periodText} key={row.map((member) => member.id).join("-")} />)}</div>
+    <div className="metric-bars">{Object.entries(team.metrics).filter(([key]) => key !== "overall").map(([key, value]) => <label key={key}><span>{key}</span><i><u style={{ width: `${value * 10}%` }} /></i><b>{value}</b></label>)}</div>
+  </section>;
+}
+
 function TeamsAdmin() {
-  const [events] = useLoad("/events?per_page=100", { items: [] }); const [eventId, setEventId] = useState(""); const [shiftId, setShiftId] = useState(""); const [formation, setFormation] = useState(null); const [error, setError] = useState(""); const [saved, setSaved] = useState(""); const [saving, setSaving] = useState(false); const [copied, setCopied] = useState(false);
+  const [events] = useLoad("/events?per_page=100", { items: [] }); const [eventId, setEventId] = useState(""); const [formation, setFormation] = useState(null); const [error, setError] = useState(""); const [saved, setSaved] = useState(""); const [saving, setSaving] = useState(false); const [copied, setCopied] = useState(false);
   const automaticSelection = useMemo(() => {
-    if (!events.items?.length) return { eventId: "", shiftId: "" };
+    if (!events.items?.length) return "";
     const now = new Date();
     const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const scheduled = events.items.filter((item) => item.status === "scheduled");
     const upcoming = scheduled.filter((item) => item.game_date >= today).sort((left, right) => left.game_date.localeCompare(right.game_date) || left.starts_at.localeCompare(right.starts_at) || left.id - right.id);
     const nearest = upcoming[0] || [...scheduled].sort((left, right) => right.game_date.localeCompare(left.game_date) || right.starts_at.localeCompare(left.starts_at) || right.id - left.id)[0];
-    if (!nearest) return { eventId: "", shiftId: "" };
-    const eventsOnNearestDate = scheduled.filter((item) => item.game_date === nearest.game_date);
-    return {
-      eventId: String(nearest.id),
-      shiftId: eventsOnNearestDate.length === 1 && nearest.shifts?.length ? String(nearest.shifts[0].id) : "",
-    };
+    return nearest ? String(nearest.id) : "";
   }, [events.items]);
-  const selectedEventId = eventId || automaticSelection.eventId;
-  const selectedShiftId = shiftId || (!eventId ? automaticSelection.shiftId : "");
+  const selectedEventId = eventId || automaticSelection;
   const event = events.items?.find((item) => item.id === Number(selectedEventId));
+  const selectedShiftId = event?.shifts?.length ? String(event.shifts[0].id) : "";
   const automaticLoad = useRef("");
   useEffect(() => {
     if (!selectedEventId || !selectedShiftId) return undefined;
@@ -416,7 +468,8 @@ function TeamsAdmin() {
   };
   const addFromBench = async (team, registrationId, positionId) => {
     const position = formation.positions.find((item) => item.id === positionId);
-    const occupants = team.members.filter((item) => item.position_id === positionId).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
+    const registration = formation.waitlist.find((item) => item.id === registrationId);
+    const occupants = team.members.filter((item) => item.position_id === positionId && registrationsOverlap(item.registration, registration)).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
     let replaceMemberId = null;
     if (occupants.length >= position.required_per_team) {
       const replacement = occupants[0];
@@ -452,9 +505,10 @@ function TeamsAdmin() {
   const changePosition = async (team, member, positionId) => {
     if (positionId === member.position_id) return;
     const position = formation.positions.find((item) => item.id === positionId);
-    const occupants = team.members.filter((item) => item.id !== member.id && item.position_id === positionId).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
+    const occupants = team.members.filter((item) => item.id !== member.id && item.position_id === positionId && registrationsOverlap(item.registration, member.registration)).sort((left, right) => left.registration.overall - right.registration.overall || left.id - right.id);
     if (occupants.length >= position.required_per_team) {
-      const eligible = occupants.filter((item) => [item.registration.primary_position_id, item.registration.secondary_position_id].includes(member.position_id));
+      const sourcePosition = formation.positions.find((item) => item.id === member.position_id);
+      const eligible = occupants.filter((item) => [item.registration.primary_position_id, item.registration.secondary_position_id].includes(member.position_id) && team.members.filter((candidate) => ![member.id, item.id].includes(candidate.id) && candidate.position_id === member.position_id && registrationsOverlap(candidate.registration, item.registration)).length < sourcePosition.required_per_team);
       if (!eligible.length) {
         setError(`${position.name} já atingiu o limite neste time. Altere primeiro a posição de outro jogador para liberar a vaga.`);
         return;
@@ -467,8 +521,8 @@ function TeamsAdmin() {
     await drop(team.id, positionId, member.id);
   };
   const periodText = (periods = []) => (periods || []).filter(Boolean).map((period) => `${period.name} · ${period.starts_at.slice(0, 5)}–${period.ends_at.slice(0, 5)}`).join(" + ");
-  return <div><div className="toolbar card"><Field label="Evento"><select value={selectedEventId} onChange={(e) => { setEventId(e.target.value); setShiftId(""); setFormation(null); setSaved(""); }}><option value="">Selecione</option>{events.items?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field><Field label="Turno"><select value={selectedShiftId} onChange={(e) => { setShiftId(e.target.value); setSaved(""); }}><option value="">Selecione</option>{event?.shifts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Button disabled={!selectedShiftId || saving} onClick={() => load(true)}>{formation ? "Refazer times" : "Formar times"}</Button><Button tone="ghost" disabled={!selectedShiftId || saving} onClick={() => load(false)}>Atualizar</Button>{formation && <Button tone="dark" onClick={async () => { const { text } = await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/whatsapp`); await navigator.clipboard.writeText(text); setCopied(true); }}>WhatsApp {copied ? "✓" : "↗"}</Button>}</div><Notice tone="error">{error}</Notice><Notice>{saving ? "Salvando alteração…" : saved}</Notice>
-    {formation && <><div className="linked-periods"><b>Turnos interligados:</b><span>{periodText(formation.linked_shifts)}</span></div><div className="balance"><div><span>Diferença média</span><b>{formation.differences.overall}</b></div>{Object.entries(formation.differences).filter(([key]) => key !== "overall").map(([key, value]) => <div key={key}><span>{key}</span><b>{value}</b></div>)}</div><div className="teams-board">{formation.teams.map((team) => <section className="team-card" key={team.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleTeamDrop(e, team)}><header><div><span>#{team.number}</span><h3>{team.name}</h3></div><b>{team.metrics.overall}</b></header><div className="team-members">{team.members.map((member) => <article draggable={!saving} onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ type: "member", memberId: member.id, positionId: member.position_id }))} key={member.id}><span className="drag">⠿</span><div><b>{member.registration.player_name}</b><select className="member-position-select" aria-label={`Posição de ${member.registration.player_name}`} value={member.position_id} disabled={saving} onChange={(e) => changePosition(team, member, Number(e.target.value))} onPointerDown={(e) => e.stopPropagation()}>{formation.positions.filter((position) => [member.registration.primary_position_id, member.registration.secondary_position_id].includes(position.id)).map((position) => <option key={position.id} value={position.id}>{position.name} · {position.required_per_team}/time</option>)}</select><small>{member.registration.overall} de nível · principal/secundária</small><small className="member-period">{periodText(member.registration.selected_periods)}</small></div><Badge status={member.registration.status} /></article>)}</div><div className="metric-bars">{Object.entries(team.metrics).filter(([key]) => key !== "overall").map(([key, value]) => <label key={key}><span>{key}</span><i><u style={{ width: `${value * 10}%` }} /></i><b>{value}</b></label>)}</div></section>)}</div>{formation.missing?.length > 0 && <div className="notice error"><b>Vagas não preenchidas:</b> {formation.missing.map((item) => `${item.team}: ${item.missing} ${item.position}`).join(" · ")}</div>}<section className="waitlist"><div className="waitlist-heading"><h3>Banco / lista de espera</h3><span>Escolha a posição e arraste para um time</span></div>{formation.waitlist.length ? <div className="bench-list">{formation.waitlist.map((item) => <BenchPlayer key={item.id} registration={item} positions={formation.positions} periodText={periodText} />)}</div> : <Empty>Ninguém aguardando.</Empty>}</section></>}
+  return <div><div className="toolbar card"><Field label="Evento"><select value={selectedEventId} onChange={(e) => { setEventId(e.target.value); setFormation(null); setSaved(""); }}><option value="">Selecione</option>{events.items?.map((item) => <option key={item.id} value={item.id}>{fmtDate(item.game_date)} · {item.title}</option>)}</select></Field><Button disabled={!selectedShiftId || saving} onClick={() => load(true)}>{formation ? "Refazer times" : "Formar times"}</Button><Button tone="ghost" disabled={!selectedShiftId || saving} onClick={() => load(false)}>Atualizar</Button>{formation && <Button tone="dark" onClick={async () => { const { text } = await api(`/events/${selectedEventId}/shifts/${selectedShiftId}/whatsapp`); await navigator.clipboard.writeText(text); setCopied(true); }}>WhatsApp {copied ? "✓" : "↗"}</Button>}</div><Notice tone="error">{error}</Notice><Notice>{saving ? "Salvando alteração…" : saved}</Notice>
+    {formation && <><div className="linked-periods"><b>Turnos interligados:</b><span>{periodText(formation.linked_shifts)}</span></div><div className="balance"><div><span>Diferença média</span><b>{formation.differences.overall}</b></div>{Object.entries(formation.differences).filter(([key]) => key !== "overall").map(([key, value]) => <div key={key}><span>{key}</span><b>{value}</b></div>)}</div><div className="teams-board">{formation.teams.map((team) => <FormationTeamCard team={team} formation={formation} saving={saving} changePosition={changePosition} handleTeamDrop={handleTeamDrop} periodText={periodText} key={team.id} />)}</div>{formation.missing?.length > 0 && <div className="notice error"><b>Vagas não preenchidas:</b> {formation.missing.map((item) => `${item.team}: ${item.missing} ${item.position}`).join(" · ")}</div>}<section className="waitlist"><div className="waitlist-heading"><h3>Banco / lista de espera</h3><span>Escolha a posição e arraste para um time</span></div>{formation.waitlist.length ? <div className="bench-list">{formation.waitlist.map((item) => <BenchPlayer key={item.id} registration={item} positions={formation.positions} periodText={periodText} />)}</div> : <Empty>Ninguém aguardando.</Empty>}</section></>}
   </div>;
 }
 
